@@ -1,0 +1,136 @@
+function fetchAllSignInAppData() {
+  var apiKey = 'Client_Key';
+  var apiSecret = 'Client_Secret';
+  var baseUrl = 'Base_URL';
+  
+  var sites = {
+    'siteA': 'siteA_Id',
+    'siteB': 'siteB_Id',
+    'siteC': 'siteC_ID'
+  }; 
+  
+  var options = {
+    'method': 'GET',
+    'headers': {
+      'Authorization': 'Basic ' + Utilities.base64Encode(apiKey + ':' + apiSecret),
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    'muteHttpExceptions': true
+  };
+
+  var today = new Date();
+  var threeMonthsAgo = new Date();
+  threeMonthsAgo.setMonth(today.getMonth() - 3);
+
+  var dateId = '?date_from=' + threeMonthsAgo.toISOString() + '&date_to=' + today.toISOString();
+
+  var groupMapping = {
+    'GroupA_ID': 'GroupA',
+    'GroupB_ID': 'GroupB',
+    'GroupC_ID': 'GroupC',
+    'GroupD_ID': 'GroupD',
+    'GroupE_ID': 'GroupE',
+    'GroupF_ID': 'GroupF',
+    'GroupG_ID': 'GroupG'
+  };
+
+  for (var region in sites) {
+    var siteId = sites[region];
+    var endpoint = '/sites/' + siteId + '/history' + dateId;
+    var url = baseUrl + endpoint;
+
+    Logger.log('Request URL for ' + region + ': ' + url);
+
+    var allData = [];
+    var nextPageUrl = url;
+
+    while (nextPageUrl) {
+      var response = UrlFetchApp.fetch(nextPageUrl, options);
+      var responseCode = response.getResponseCode();
+
+      if (responseCode !== 200) {
+        Logger.log('Error: ' + responseCode);
+        Logger.log(response.getContentText());
+        return;
+      }
+
+      var data = JSON.parse(response.getContentText());
+      allData = allData.concat(data.data);
+      nextPageUrl = data.links.next;
+    }
+
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(region);
+    if (!sheet) {
+      sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet(region);
+    }
+
+    // Delete rows with status not equal to "signed_out"
+    var existingData = sheet.getDataRange().getValues();
+    var headers = existingData[0];
+    var statusIndex = headers.indexOf('status'); // Assuming 'status' is a header
+
+    if (statusIndex !== -1) {
+      for (var i = existingData.length - 1; i > 0; i--) {
+        if (existingData[i][statusIndex] !== 'signed_out') {
+          sheet.deleteRow(i + 1); // +1 to account for the header row
+        }
+      }
+    }
+
+    var existingData = sheet.getDataRange().getValues();
+    var existingIds = existingData.slice(1).map(function(row) {
+      return row[0]; // Assuming the first column is the unique ID
+    });
+
+    var headers = Object.keys(allData[0]);
+    var personalFieldsHeaders = [];
+    var additionalFieldsHeaders = [];
+
+    allData.forEach(function(row) {
+      if (row.personal_fields) {
+        Object.keys(row.personal_fields).forEach(function(key) {
+          if (!personalFieldsHeaders.includes(key)) {
+            personalFieldsHeaders.push(key);
+          }
+        });
+      }
+      if (row.additional_fields) {
+        Object.keys(row.additional_fields).forEach(function(key) {
+          if (!additionalFieldsHeaders.includes(key)) {
+            additionalFieldsHeaders.push(key);
+          }
+        });
+      }
+    });
+
+    var combinedHeaders = headers.concat(personalFieldsHeaders).concat(additionalFieldsHeaders);
+    combinedHeaders[3] = 'Name_';
+    combinedHeaders.push('group_name');
+
+    if (existingData.length === 0) {
+      sheet.appendRow(combinedHeaders);
+    }
+
+    allData.forEach(function(row) {
+      if (!existingIds.includes(row.id)) {
+        var rowData = headers.map(function(header) {
+          return row[header];
+        });
+
+        personalFieldsHeaders.forEach(function(header) {
+          rowData.push(row.personal_fields ? row.personal_fields[header] : '');
+        });
+
+        additionalFieldsHeaders.forEach(function(header) {
+          rowData.push(row.additional_fields ? row.additional_fields[header] : '');
+        });
+
+        var groupName = groupMapping[row.group_id] || '';
+        rowData.push(groupName);
+
+        sheet.appendRow(rowData);
+      }
+    });
+  }
+}
